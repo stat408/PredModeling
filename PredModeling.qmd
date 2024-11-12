@@ -1,0 +1,286 @@
+---
+title: "Predictive Modeling"
+format: gfm
+editor: source
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(randomForest)
+library(maps)
+library(viridis)
+library(rpart)
+library(rpart.plot)
+library(mnormt)
+```
+
+
+## Predictive Modeling / Statistical Learning
+
+Here are a few questions to consider:
+
+- What do predictive modeling and statistical learning mean to you?
+- What about terms like: artificial intelligence, data science, data mining, data analytics, machine learning, predictive analytics, predictive modeling, statistical learning are these different from statistics?
+ 
+
+## Statistical Learning Definition
+
+> Statistical learning refers to a set of tools for modeling and understanding complex datasets. It is a recently developed area in statistics and blends with parallel developments in computer science and, in particular, machine learning. The field encompasses many methods such as the lasso and sparse regression, classification and regression trees, and boosting and support vector machines. 
+
+Courtesy of *An Introduction to Statistical Learning: with Applications in R*, by Gareth James, Daniela Witten, Trevor Hastie, and Robert Tibshirani. Note: a free e-version of this textbook can be obtain for free through the MSU Library.
+
+
+## Predictive Modeling Overview
+
+Recall the Seattle housing data set, how would you:
+
+- Build a model to predict housing prices in King County
+- Determine if your model was good or useful?
+
+```{r}
+seattle <- read_csv('http://www.math.montana.edu/ahoegh/teaching/stat408/datasets/SeattleHousing.csv') |>
+  mutate(zipcode = factor(zipcode),
+         house_id = 1:n())
+glimpse(seattle)
+```
+
+## Loss functions
+
+A loss function is a principled way to compare a set of predictive models.
+
+Squared Error: $$ (Price_{pred} - Price_{actual}) ^ 2$$
+
+Zero - One Loss (binary setting):
+$$f(x)=
+\begin{cases}
+    1,& \text{if } y_{pred} \neq y_{actual}\\
+    0,              & y_{pred} = y_{actual}
+\end{cases}$$
+
+## Model Evaluation
+
+Suppose we fit a model using all of the Seattle housing data, can that model be used to predict prices for homes in that data set?
+
+```{r, echo=F}
+usa <- map_data("county")
+wash <- filter(usa, region %in% c("washington"))
+
+ggplot() + 
+  geom_polygon(data = wash, aes(x=long, y = lat, group = group), fill = 'grey50') +
+  coord_fixed(1.3) + geom_point(data = seattle, aes(x = long, y = lat, color=price), size=.5) +
+  scale_color_viridis() +
+  theme_minimal()
+
+```
+
+
+
+We cannot assess the predictive performance by fitting a model to data and then evaluating the model using the same data.
+
+
+## Test / Training and Cross-Validation
+
+There are two common options to give valid estimates of model performance:
+
+- **Training / Validation / Test approach**. Generally 70% of the data is used to fit the model (training) and the other 30% is held out for validation and testing.
+
+- **Cross-Validation**. Cross validation breaks your data into *k* groups, or folds. Then a model is fit on the data on the *k-1* groups and then used to make predictions on data in the held out *k$^{th}$ group. This process continues until all groups have been held out once.
+
+## Constructing a test and training set
+
+```{r, mysize=TRUE, size='\\footnotesize',}
+set.seed(11112024)
+num_houses <- nrow(seattle)
+
+# select 70 % of houses for training set
+train_ids <- sample(1:num_houses, size=round(num_houses*.7))
+train_set <- seattle |> 
+  filter(house_id %in% train_ids)
+
+# select remaining 30 % of houses for test set
+test_set <- seattle |>
+  filter(! house_id %in% train_ids)
+```
+
+
+## Linear Regression
+```{r}
+lm1 <- lm(price ~ bedrooms + bathrooms + sqft_living + zipcode + waterfront, data=train_set)
+summary(lm1)
+```
+
+
+```{r}
+mad_lm <- mean(abs(test_set$price - predict(lm1,test_set)))
+```
+
+The mean absolute deviation in housing price predictions using the linear model is `r scales::dollar_format()(round(mad_lm))`
+
+## Polynomial Regression
+
+```{r}
+seattle |>
+  ggplot(aes(y = price, x = sqft_living)) +
+  geom_point() +
+  geom_smooth(method = 'loess', formula = 'y~x') +
+  geom_smooth(method = 'lm', formula = 'y~x', color = 'red') +
+  theme_bw() +
+  labs(caption = 'Red is best fit linear model, blue is loess smoother')
+```
+
+Now include squared terms for square foot of living space too.
+
+```{r, mysize=TRUE, size='\\tiny'}
+train_set <- train_set |>
+  mutate(sqft_living2 = sqft_living^2)
+
+test_set <- test_set |>
+  mutate(sqft_living2 = sqft_living^2)
+
+lm2 <- lm(price ~ bedrooms + bathrooms + sqft_living + sqft_living2 + 
+             zipcode + waterfront, data=train_set)
+summary(lm2)
+```
+
+
+```{r}
+
+mad_lm2 <- mean(abs(test_set$price - predict(lm2,test_set)))
+```
+Including this squared term lowers our predictive error from `r scales::dollar_format()(round(mad_lm2))`.
+
+## Decision Trees
+
+```{r,echo=F}
+tree1 <- rpart(price ~ bedrooms + bathrooms + sqft_living + sqft_living2 + 
+              waterfront + zipcode, data=train_set, method = 'anova')
+rpart.plot(tree1)
+```
+
+
+```{r}
+mad_tree1 <- mean(abs(test_set$price - predict(tree1,test_set)))
+```
+
+Using this algorithm, our predictive error is about the same as the first regression model `r scales::dollar_format()(round(mad_tree1))`.
+
+## Ensemble Methods - Random Forest
+
+Ensemble methods combine a large set of predictive models into a single framework. One example is a random forest - which combines a large number of trees.
+
+While these methods are very effective in a predictive setting, it is often difficult to directly assess the impact of particular variables in the model.
+
+## Random Forest
+One specific kind of ensemble method is known as a random forest, which combines several decision trees.
+```{r}
+rf1 <- randomForest(price~., data=train_set)
+
+mad_rf <- mean(abs(test_set$price - predict(rf1,test_set)))
+```
+
+The prediction error for the random forest is substantially better than the other models we have identified `r scales::dollar_format()(round(mad_rf))`.
+
+
+## Classification Methods
+
+Classification - Given New Points (*) how do we classify them?
+
+```{r, echo = F}
+set.seed(10)
+cluster1 <- rmnorm(n=25,mean=c(.3,.2), varcov=diag(2)*.025)
+cluster2 <- rmnorm(n=25,mean=c(.15,.75),varcov=diag(2)*.025)
+cluster3 <- rmnorm(n=50, mean=c(.75,.6),varcov=diag(2)*.03)
+combined <- rbind(cluster1,cluster2,cluster3)
+plot(rbind(cluster1,cluster2,cluster3),type='n',axes=F,xlab='', ylab='')
+points(cluster1,pch='1',col='dodgerblue')
+points(cluster2,pch='1',col='dodgerblue')
+points(cluster3,pch='0',col='firebrick4')
+box()
+#pred.points <- cbind(c(.2,.9,.48,.45),c(.7,.4,.3,.35))
+pred.points <- cbind(c(.2,.45,.48,.9),c(.7,.35,.3,.4))
+
+colnames(pred.points) <- c('x','y')
+points(pred.points, pch='*', cex=2.5)
+```
+
+## Logistic Regression
+
+
+```{r}
+labels <- (rep(c(1,0),each=50))
+supervised <- as.data.frame(cbind(labels, combined))
+colnames(supervised)[2:3] <- c('x','y')
+logistic <- glm(labels ~ x + y, data = supervised, family='binomial')
+summary(logistic)
+```
+
+```{r, echo=F, mysize=TRUE, size='\\scriptsize'}
+kable(cbind(pred.points,round(predict(logistic,as.data.frame(pred.points), type='response'),3)),col.names=c('x','y','Prob[Val = 1]'))
+```
+
+## Decision Trees
+
+```{r,echo=F}
+tree1 <- rpart(labels ~., data=supervised, method = 'class')
+rpart.plot(tree1)
+```
+
+
+```{r, echo=F}
+set.seed(10)
+cluster1 <- rmnorm(n=25,mean=c(.3,.2), varcov=diag(2)*.025)
+cluster2 <- rmnorm(n=25,mean=c(.15,.75),varcov=diag(2)*.025)
+cluster3 <- rmnorm(n=50, mean=c(.75,.6),varcov=diag(2)*.03)
+plot(rbind(cluster1,cluster2,cluster3),type='n',axes=F,xlab='', ylab='')
+points(cluster1,pch='1',col='dodgerblue')
+points(cluster2,pch='1',col='dodgerblue')
+points(cluster3,pch='0',col='firebrick4')
+box()
+#pred.points <- cbind(c(.2,.9,.48,.45),c(.7,.4,.3,.35))
+pred.points <- cbind(c(.2,.45,.48,.9),c(.7,.35,.3,.4))
+
+colnames(pred.points) <- c('x','y')
+points(pred.points, pch='*', cex=2.5)
+abline(v=.4849,lwd=3)
+```
+```{r}
+kable(cbind(pred.points,
+    round(predict(tree1,as.data.frame(pred.points))[,2],3)),
+    col.names=c('x','y','Prob[Val = 1]'))
+
+```
+
+## Exercise - Prediction for Capital Bike Share
+
+```{r}
+bikes <- read_csv('http://www.math.montana.edu/ahoegh/teaching/stat408/datasets/Bike.csv') |>
+  mutate(bike_id = 1:n(),
+         season = factor(season),
+         holiday = factor(holiday),
+         workingday = factor(workingday),
+         weather = factor(weather))
+
+
+set.seed(11142024)
+train_bike_ids <- sample(1:nrow(bikes), floor(.7 * nrow(bikes))) 
+train_bike <- bikes |>
+  filter(bike_id %in% train_bike_ids)
+
+test_validation_ids <- (1:nrow(bikes))[!(1:nrow(bikes)) %in% train_bike_ids]
+test_ids <- sample(test_validation_ids, round(length(test_validation_ids)/2))
+test_bike <- bikes |>
+  filter(bike_id %in% test_ids)
+
+validation_bike <- bikes |>
+  filter(!bike_id %in% c(train_bike_ids, test_ids))
+```
+
+Construct a few predictive models and compare your prediction error (Mean absolute deviation) on count. You can use the validation set to tune (or tinker with) your model.
+
+```{r}
+lm_bikes <- lm(count ~ holiday + atemp + workingday, data=train_bike)
+lm_mad <- mean(abs(test_bike$count - predict(lm_bikes,test_bike)))
+
+```
+A basic linear model has a prediction error of `r round(lm_mad)`, so if you can improve upon this.
